@@ -1,0 +1,35 @@
+before_script:
+	- apt-get update && apt-get install -y mysql-client
+	- ln -s /builds /go/src/$(echo "github.com/crolly/gorm_test" | cut -d "/" -f1)
+	- cd /go/src/github.com/crolly/gorm_test
+	- mkdir -p public/assets
+	- go get -u github.com/gobuffalo/buffalo/buffalo
+	- go get -t -v ./...
+	- export PATH="$PATH:$GOPATH/bin"
+
+stages:
+	- test
+
+.test-vars: &test-vars
+	variables:
+		GO_ENV: "test"
+		MYSQL_DATABASE: "gorm_test_test"
+		MYSQL_ROOT_PASSWORD: "root"
+		TEST_DATABASE_URL: "mysql://root:root@(mysql:3306)/gorm_test_test?parseTime=true&multiStatements=true&readTimeout=1s"
+
+# Golang version choice helper
+.use-golang-image: &use-golang-latest
+	image: golang:latest
+
+.use-golang-image: &use-golang-1-8
+	image: golang:1.8
+
+test:
+	# Change to "<<: *use-golang-latest" to use the latest Go version
+	<<: *use-golang-1-8
+	<<: *test-vars
+	stage: test
+	services:
+		- mysql:5
+	script:
+		- buffalo test
