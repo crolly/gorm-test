@@ -1,14 +1,15 @@
 package actions
 
 import (
+	"github.com/crolly/gorm_test/models"
 	"github.com/gobuffalo/buffalo"
 	"github.com/gobuffalo/envy"
 	forcessl "github.com/gobuffalo/mw-forcessl"
 	paramlogger "github.com/gobuffalo/mw-paramlogger"
+	"github.com/jinzhu/gorm"
+	"github.com/pkg/errors"
 	"github.com/unrolled/secure"
 
-	"github.com/crolly/gorm_test/models"
-	"github.com/gobuffalo/buffalo-pop/pop/popmw"
 	csrf "github.com/gobuffalo/mw-csrf"
 	i18n "github.com/gobuffalo/mw-i18n"
 	"github.com/gobuffalo/packr"
@@ -53,13 +54,15 @@ func App() *buffalo.App {
 		// Wraps each request in a transaction.
 		//  c.Value("tx").(*pop.Connection)
 		// Remove to disable this.
-		app.Use(popmw.Transaction(models.DB))
+		// app.Use(popmw.Transaction(models.DB))
+		app.Use(GormTransaction(models.GormDB))
 
 		// Setup and use translations:
 		app.Use(translations())
 
 		app.GET("/", HomeHandler)
 
+		app.Resource("/users", UsersResource{})
 		app.ServeFiles("/", assetsBox) // serve files from the public directory
 	}
 
@@ -88,4 +91,39 @@ func forceSSL() buffalo.MiddlewareFunc {
 		SSLRedirect:     ENV == "production",
 		SSLProxyHeaders: map[string]string{"X-Forwarded-Proto": "https"},
 	})
+}
+
+var GormTransaction = func(db *gorm.DB) buffalo.MiddlewareFunc {
+	return func(h buffalo.Handler) buffalo.Handler {
+		return func(c buffalo.Context) error {
+
+			ef := func() error {
+				if err := h(c); err != nil {
+					return err
+				}
+				if res, ok := c.Response().(*buffalo.Response); ok {
+					if res.Status < 200 || res.Status >= 400 {
+						return errors.New("no connection to db")
+					}
+				}
+				return nil
+			}
+
+			// wrap all requests in a transaction and set the length
+			// of time doing things in the db to the log.
+			tx := db.Begin()
+			if tx.Error != nil {
+				return errors.WithStack(tx.Error)
+			}
+			defer tx.Commit()
+
+			c.Set("tx", tx)
+			err := ef()
+			if err != nil && errors.Cause(err) != errors.New("no connection to db") {
+				tx.Rollback()
+				return err
+			}
+			return nil
+		}
+	}
 }
